@@ -1,5 +1,5 @@
 import pandas as pd
-from ..simulate import hourly_generation_series
+from simulate import hourly_generation_series
 
 def test_hourly_length_and_bounds():
     ser = hourly_generation_series(51.52, -0.09, kwp=4, year=2023)

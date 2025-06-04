@@ -1,4 +1,4 @@
-from ..simulate import estimate_generation
+from simulate import estimate_generation
 
 def test_daily_yield_reasonable():
     # Rough sanity check for a typical UK roof
