@@ -1,10 +1,13 @@
-# simulate.py  (only the few changed lines are marked ### CHANGED ###)
+# simulate.py  
 import argparse
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import datetime as dt
 from typing import Optional, Tuple
+from dispatch import greedy_dispatch, BatteryCfg  
+from octopus_prices import agile_prices
+
 
 PVGIS_VERSION = "v5_3"                         # need ≥5.3 for SARAH-3
 BASE_URL      = f"https://re.jrc.ec.europa.eu/api/{PVGIS_VERSION}/"
@@ -92,8 +95,10 @@ def geocode(postcode: str) -> Tuple[float, float]:
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
         description="Estimate solar generation for a UK site")
-    p.add_argument("--kwp", type=float, default=4.0,
-                   help="Array size in kWp")
+    p.add_argument("--kwp", type=float,
+                   help="Array size in kWp (e.g. 4.0)")
+    p.add_argument("--panels", type=int,
+                   help="Number of 300 W panels (e.g. 10)")
 
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--postcode", type=str,
@@ -103,14 +108,59 @@ if __name__ == "__main__":
 
     p.add_argument("--hourly", action="store_true",
                    help="Print the first 24 h of hourly kWh")
+
+    p.add_argument("--dispatch", action="store_true",
+               help="Run greedy battery schedule for next 24 h")
+
+    p.add_argument("--tariff", choices=["mock", "agile"], default="mock",
+               help="Price source")
+
     args = p.parse_args()
+
+    # ─── Convert panels → kWp if requested ───────────────────────────
+    if args.panels is not None:
+        # assume 300 W per panel → 0.3 kWp/panel
+        kwp = args.panels * 0.3
+    elif args.kwp is not None:
+        kwp = args.kwp
+    else:
+        p.error("You must supply either --kwp or --panels")
 
     lat, lon = (geocode(args.postcode) if args.postcode
                 else tuple(map(float, args.latlon)))
 
-    if args.hourly:
-        s = hourly_generation_series(lat, lon, args.kwp)
+    if args.dispatch:
+        pv = hourly_generation_series(lat, lon, kwp).head(24)
+
+        if args.tariff == "agile":
+            # ask for yesterday's data
+            query_date = dt.date.today() - dt.timedelta(days=1)
+            s = agile_prices(query_date, postcode=args.postcode)
+
+            if len(s) < 48:
+                print("⚠️  Agile returned no rates—using mock prices instead.")
+                price = mock_price_series(pv.index)
+            else:
+                hourly_raw = s.resample("h").mean().head(24)
+                price = pd.Series(hourly_raw.values, index=pv.index, name="price_£pkWh")
+
+        else:
+            price = mock_price_series(pv.index)
+
+        res = greedy_dispatch(pv, price)
+        print(f"Greedy battery saves £{res['pounds_saved']:.2f} in the next 24 h")
+
+    elif args.hourly:
+        s = hourly_generation_series(lat, lon, kwp)
         print(s.head(24))
+
     else:
-        daily = estimate_generation(lat, lon, args.kwp)
+        daily = estimate_generation(lat, lon, kwp)
         print(f"Estimated average daily generation: {daily:.1f} kWh")
+
+
+
+
+
+
+

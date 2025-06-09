@@ -1,0 +1,8 @@
+# runtime
+requests
+pandas
+numpy
+datetime
+
+# dev / tests
+pytest
